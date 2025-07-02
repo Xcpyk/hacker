@@ -1,10 +1,11 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 import requests
 from models import db, NewsItem
 from moonshot import MoonshotTranslator
 from dotenv import load_dotenv
 import os
 import threading
+from datetime import datetime
 
 load_dotenv()
 
@@ -74,13 +75,36 @@ def fetch_and_translate_news():
 
 @app.route('/')
 def index():
-    """首页显示新闻列表"""
-    # 获取所有已翻译的新闻（按评分排序）
-    news_items = NewsItem.query.filter(
+    """首页显示新闻列表，支持分页"""
+    # 获取当前页码，默认为1
+    page = request.args.get('page', 1, type=int)
+    per_page = 40
+    # 获取排序方式，默认为time
+    sort = request.args.get('sort', 'time')
+    if sort == 'score':
+        order_by = NewsItem.score.desc()
+    else:
+        order_by = NewsItem.time.desc()
+    # 获取所有已翻译的新闻（按排序方式排序）
+    pagination = NewsItem.query.filter(
         NewsItem.translation_status == 2
-    ).order_by(NewsItem.score.desc()).limit(30).all()
-    
-    return render_template('index.html', news_items=news_items)
+    ).order_by(order_by).paginate(page=page, per_page=per_page, error_out=False)
+    news_items = pagination.items
+
+    # # 你可以在这里插入自定义新闻，格式与NewsItem一致
+    # custom_news = [
+    #     {
+    #         'translated_title': '广告位招租',
+    #         'original_title': 'zhangxuqueshiniubi',
+    #         'original_url': 'https://www.baidu.com',
+    #         'score': 999,
+    #     },
+    #     # 可以继续添加更多自定义新闻
+    # ]
+    # # 将自定义新闻插入到新闻列表最前面
+    # news_items = custom_news + news_items
+
+    return render_template('index.html', news_items=news_items, pagination=pagination, page=page, sort=sort)
 
 def run_background_task():
     """启动后台任务定时获取并翻译新闻"""
@@ -90,6 +114,24 @@ def run_background_task():
         fetch_and_translate_news()
         # 每5分钟更新一次
         time.sleep(300)
+
+def datetimeformat_filter(ts):
+    try:
+        now = datetime.now()
+        dt = datetime.fromtimestamp(int(ts))
+        diff = (now - dt).total_seconds()
+        if diff < 60:
+            return f"{int(diff)}秒前"
+        elif diff < 3600:
+            return f"{int(diff//60)}分钟前"
+        elif diff < 86400:
+            return f"{int(diff//3600)}小时前"
+        else:
+            return dt.strftime('%Y年%m月%d日 %H:%M')
+    except Exception:
+        return ''
+
+app.jinja_env.filters['datetimeformat'] = datetimeformat_filter
 
 if __name__ == '__main__':
     # 启动后台任务线程
